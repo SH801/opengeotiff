@@ -3,70 +3,108 @@ import sys
 import yaml
 import requests
 import rasterio
+import zipfile
+import glob
+from urllib.parse import urlparse, unquote, urldefrag
+import re
 import geopandas as gpd
 from rasterio.mask import mask as riomask
 from rasterio.features import shapes
-from shapely.geometry import shape
+from rasterio.enums import Resampling
+from shapely.geometry import mapping
 
 class OpenGeoTIFF:
     def __init__(self, config_path):
         with open(config_path, 'r') as f:
             self.config = yaml.safe_load(f)
         
-        self.source = self.config['source']
+        # Defragment the URL to separate the link from the #target-file
+        self.raw_source = self.config['source']
+        self.source, self.target_internal_file = urldefrag(self.raw_source)
+        
         self.cache_dir = self.config['cache_dir']
         self.clipping_path = self.config['clipping']
         self.output_name = self.config['output']
         self.val_min = self.config['mask']['min']
         self.val_max = self.config['mask']['max']
         
-        if not os.path.exists(self.cache_dir):
-            os.makedirs(self.cache_dir, exist_ok=True)
+        os.makedirs(self.cache_dir, exist_ok=True)
 
     def run(self):
-        # 1. Download
-        filename = os.path.basename(self.source)
-        local_tif = os.path.join(self.cache_dir, filename)
+        # 1. Sanitize filename for local storage
+        # Strips query params so we don't get 'file?url=...' as a filename
+        parsed_url = urlparse(self.source)
+        clean_name = os.path.basename(unquote(parsed_url.path))
         
-        if not os.path.exists(local_tif):
-            print(f"[*] Downloading source: {self.source}")
+        # Specific fix for Solargis/Atlas redirect links
+        if 'url=' in self.source:
+            match = re.search(r'([^/&?]+\.zip)', self.source)
+            if match:
+                clean_name = match.group(1)
+
+        local_path = os.path.join(self.cache_dir, clean_name)
+
+        # 2. Download
+        if not os.path.exists(local_path):
+            print(f"[*] Downloading: {clean_name}")
             r = requests.get(self.source, stream=True)
             r.raise_for_status()
-            with open(local_tif, 'wb') as f:
+            with open(local_path, 'wb') as f:
                 for chunk in r.iter_content(chunk_size=8192):
                     f.write(chunk)
-        else:
-            print(f"[*] Using cached source: {local_tif}")
 
-        # 2. Process Raster
-        print(f"[*] Processing mask ({self.val_min} - {self.val_max})...")
-        with rasterio.open(local_tif) as src:
-            # Handle Clipping
-            clip_gdf = gpd.read_file(self.clipping_path).to_crs(src.crs)
-            geoms = clip_gdf.geometry.values
+        # 3. Handle ZIP Extraction
+        final_tif = local_path
+        if zipfile.is_zipfile(local_path):
+            extract_folder = local_path.replace('.zip', '_extracted')
+            if not os.path.exists(extract_folder):
+                with zipfile.ZipFile(local_path, 'r') as zip_ref:
+                    zip_ref.extractall(extract_folder)
             
-            out_image, out_transform = riomask(src, geoms, crop=True)
-            data = out_image[0]
+            # Find the TIF
+            tifs = glob.glob(os.path.join(extract_folder, "**/*.tif"), recursive=True)
+            
+            if self.target_internal_file:
+                # Look for the specific file mentioned after the #
+                matches = [f for f in tifs if self.target_internal_file.lower() in f.lower()]
+                if matches:
+                    final_tif = matches[0]
+                    print(f"[*] Found target file: {os.path.basename(final_tif)}")
+                else:
+                    print(f"[!] Warning: {self.target_internal_file} not found. Falling back to largest TIF.")
+                    final_tif = max(tifs, key=os.path.getsize)
+            else:
+                # Default to largest if no fragment provided
+                final_tif = max(tifs, key=os.path.getsize)
 
-            # 3. Apply Mask Logic
-            # Areas within range become 1, others are masked
-            mask_condition = (data >= self.val_min) & (data <= self.val_max)
+        # 4. Raster Processing (Clipping & Masking)
+        print(f"[*] Filtering values ({self.val_min}-{self.val_max})...")
+        with rasterio.open(final_tif) as src:
+            clip_gdf = gpd.read_file(self.clipping_path).to_crs(src.crs)
+            geoms = [mapping(g) for g in clip_gdf.geometry]
+
+            # Use nodata=0 or another safe value to avoid leakage
+            out_image, out_transform = riomask(src, geoms, crop=True, nodata=0)
+            data = out_image[0] 
+
+            # 2. MASKING (Second step)
+            # Now we apply the 0-1000 threshold to the ALREADY clipped data
+            # We specifically ignore the 0 (NoData) from the clip step
+            mask_condition = (data >= self.val_min) & (data <= self.val_max) & (data != 0)
             binary_mask = mask_condition.astype('int16')
 
-            # 4. Vectorize
-            # We only want to create polygons for the '1' values (the insufficient areas)
+            # 3. VECTORIZING
+            # Converting the clean binary mask to GeoPackage shapes
             results = (
                 {'properties': {'value': v}, 'geometry': s}
                 for i, (s, v) in enumerate(shapes(binary_mask, mask=(binary_mask == 1), transform=out_transform))
             )
 
-            # 5. Export
-            print(f"[*] Vectorizing and saving to {self.output_name}...")
             gdf = gpd.GeoDataFrame.from_features(list(results), crs=src.crs)
-            
-            # Save to GPKG
+            # Apply slight simplification to fix 'coarseness'
+            gdf['geometry'] = gdf['geometry'].simplify(0.005, preserve_topology=True)
             gdf.to_file(self.output_name, driver="GPKG")
-            print("[+] Done.")
+            print(f"[+] Done: {self.output_name}")
 
 def main():
     # Check if a config file was provided

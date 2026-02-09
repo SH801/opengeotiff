@@ -37,14 +37,16 @@ The `.yml` configuration file should have the following format:
 codebase:
   https://github.com/SH801/opengeotiff.git
 
-# Link to European Commission SARAH-2 Solar Radiation Data GeoTIFF
-# "Yearly average of annual global irradiance on an optimally inclined surface" 
+# Link to Solargis 1km resolution solar irradiation GeoTIFF
+# https://solargis.com/resources/free-maps-and-gis-data?locality=united-kingdom
+# Solar resource map © 2021 Solargis [https://solargis.com]
 source:
-  https://re.jrc.ec.europa.eu/pvg_download/sarah2data/gh_opt_year_sarah2.tif
+  https://cms.solargis.com/file?url=download/United%20Kingdom/United-Kingdom_GISdata_LTAym_YearlyMonthlyTotals_GlobalSolarAtlas-v2_GEOTIFF.zip&bucket=globalsolaratlas.info#GTI.tif
 
 # Directory where downloaded tiles and temporary data are stored
 cache_dir:
-  ./cache
+  # cache/opendem
+  /Volumes/A027/cache/opengeotiff
 
 # External URL or path to a geometry file used to crop the output to a specific shape
 clipping:
