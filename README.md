@@ -37,17 +37,14 @@ The `.yml` configuration file should have the following format:
 codebase:
   https://github.com/SH801/opengeotiff.git
 
-# Link to GeoTIFF image which may be zipped
+# Link to European Commission SARAH-2 Solar Radiation Data GeoTIFF
+# "Yearly average of annual global irradiance on an optimally inclined surface" 
 source:
-  https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png
+  https://re.jrc.ec.europa.eu/pvg_download/sarah2data/gh_opt_year_sarah2.tif
 
 # Directory where downloaded tiles and temporary data are stored
 cache_dir:
-  ./tile_cache
-
-# Bounding box in WGS84 coordinates: [min_lon, min_lat, max_lon, max_lat]
-bounds:
-  [-9.0, 49.0, 2.0, 61.0]
+  ./cache
 
 # External URL or path to a geometry file used to crop the output to a specific shape
 clipping:
@@ -55,17 +52,18 @@ clipping:
 
 # The exact name and extension of the final file generated
 output:
-  insufficient-solar-irradiation--uk.gpkg
+  solar-insufficient-solar-irradiation--uk.gpkg
 
-# Filters the final result values, e.g. degrees for slope
+# Filters the final result values
+# We only want to select points with insufficient irradiation which is typically 1000 kWh/m2/year
 mask:
-  # Minimum excessive slope is 5 degrees
+  # Minimum kWh/m2/year
   min: 
-    5.001
+    0
   
-  # Maxium excessive slope is 90 degrees
+  # Maximum kWh/m2/year
   max: 
-    100
+    1000
 ```
 
 ## Possible uses
