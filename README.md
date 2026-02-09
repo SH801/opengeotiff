@@ -45,8 +45,7 @@ source:
 
 # Directory where downloaded tiles and temporary data are stored
 cache_dir:
-  # cache/opendem
-  /Volumes/A027/cache/opengeotiff
+  ./cache/opengeotiff
 
 # External URL or path to a geometry file used to crop the output to a specific shape
 clipping:
